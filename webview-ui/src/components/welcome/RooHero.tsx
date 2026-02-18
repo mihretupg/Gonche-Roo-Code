@@ -7,6 +7,7 @@ const RooHero = () => {
 	})
 	const [isHovered, setIsHovered] = useState(false)
 
+	//
 	return (
 		<div
 			className="mb-4 relative forced-color-adjust-none group flex flex-col items-center w-30 pt-4 overflow-clip"
