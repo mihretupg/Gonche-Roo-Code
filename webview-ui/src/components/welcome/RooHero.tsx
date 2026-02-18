@@ -1,5 +1,6 @@
 import { useState } from "react"
 
+// RooHero is a component that displays the Roo logo with a bouncing animation on hover, along with some decorative elements like a dashed line and a glowing circle. It uses Tailwind CSS for styling and animations.
 const RooHero = () => {
 	const [imagesBaseUri] = useState(() => {
 		const w = window as any
