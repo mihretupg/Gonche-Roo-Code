@@ -44,58 +44,71 @@ export function sourcemapPlugin(): Plugin {
 				}
 
 				// Find JS files in the assets directory
-				const jsFiles = fs.readdirSync(assetsDir).filter((file) => file.endsWith(".js"))
+				const jsFiles = fs
+					.readdirSync(assetsDir, { withFileTypes: true })
+					.filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+					.map((entry) => entry.name)
 
 				console.log(`Found ${jsFiles.length} JS files in assets directory`)
 
 				// Check for source maps
 				for (const jsFile of jsFiles) {
-					const jsPath = path.join(assetsDir, jsFile)
-					const mapPath = jsPath + ".map"
+					try {
+						const jsPath = path.join(assetsDir, jsFile)
+						const mapPath = jsPath + ".map"
 
-					// If source map exists, ensure it's properly referenced in the JS file
-					if (fs.existsSync(mapPath)) {
-						console.log(`Source map found for ${jsFile}`)
-
-						// Read the JS file
-						let jsContent = fs.readFileSync(jsPath, "utf8")
-
-						// Check if the source map is already referenced
-						if (!jsContent.includes("//# sourceMappingURL=")) {
-							console.log(`Adding source map reference to ${jsFile}`)
-
-							// Add source map reference
-							jsContent += `\n//# sourceMappingURL=${jsFile}.map\n`
-
-							// Write the updated JS file
-							fs.writeFileSync(jsPath, jsContent)
+						// Guard against transient file churn during build/test orchestration.
+						if (!fs.existsSync(jsPath)) {
+							console.warn(`Skipping missing JS file ${jsFile}`)
+							continue
 						}
 
-						// Make sure map file is in the correct format and has proper sourceRoot
-						try {
-							const mapContent = JSON.parse(fs.readFileSync(mapPath, "utf8"))
+						// If source map exists, ensure it's properly referenced in the JS file
+						if (fs.existsSync(mapPath)) {
+							console.log(`Source map found for ${jsFile}`)
 
-							// Ensure the sourceRoot is set correctly for VSCode webview
-							if (!mapContent.sourceRoot) {
-								mapContent.sourceRoot = ""
+							// Read the JS file
+							let jsContent = fs.readFileSync(jsPath, "utf8")
+
+							// Check if the source map is already referenced
+							if (!jsContent.includes("//# sourceMappingURL=")) {
+								console.log(`Adding source map reference to ${jsFile}`)
+
+								// Add source map reference
+								jsContent += `\n//# sourceMappingURL=${jsFile}.map\n`
+
+								// Write the updated JS file
+								fs.writeFileSync(jsPath, jsContent)
 							}
 
-							// Make sure "sources" paths are relative
-							if (mapContent.sources) {
-								mapContent.sources = mapContent.sources.map((source: string) => {
-									// Remove absolute paths to ensure they work in VSCode webview context
-									return source.replace(/^\//, "")
-								})
-							}
+							// Make sure map file is in the correct format and has proper sourceRoot
+							try {
+								const mapContent = JSON.parse(fs.readFileSync(mapPath, "utf8"))
 
-							// Write back the updated source map with proper formatting
-							fs.writeFileSync(mapPath, JSON.stringify(mapContent, null, 2))
-							console.log(`Updated source map for ${jsFile}`)
-						} catch (error) {
-							console.error(`Error processing source map for ${jsFile}:`, error)
+								// Ensure the sourceRoot is set correctly for VSCode webview
+								if (!mapContent.sourceRoot) {
+									mapContent.sourceRoot = ""
+								}
+
+								// Make sure "sources" paths are relative
+								if (mapContent.sources) {
+									mapContent.sources = mapContent.sources.map((source: string) => {
+										// Remove absolute paths to ensure they work in VSCode webview context
+										return source.replace(/^\//, "")
+									})
+								}
+
+								// Write back the updated source map with proper formatting
+								fs.writeFileSync(mapPath, JSON.stringify(mapContent, null, 2))
+								console.log(`Updated source map for ${jsFile}`)
+							} catch (error) {
+								console.error(`Error processing source map for ${jsFile}:`, error)
+							}
+						} else {
+							console.log(`No source map found for ${jsFile}`)
 						}
-					} else {
-						console.log(`No source map found for ${jsFile}`)
+					} catch (error) {
+						console.error(`Error handling source map workflow for ${jsFile}:`, error)
 					}
 				}
 
