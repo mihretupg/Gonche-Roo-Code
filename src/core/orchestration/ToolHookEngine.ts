@@ -2,26 +2,17 @@ import fs from "fs/promises"
 import path from "path"
 import crypto from "crypto"
 import { execSync } from "child_process"
-import * as yaml from "yaml"
 
 import type { AskApproval, ToolResponse } from "../../shared/tools"
 import type { Task } from "../task/Task"
+import {
+	type ActiveIntentSpec as ActiveIntent,
+	ACTIVE_INTENTS_FILE,
+	loadActiveIntentsSpec,
+} from "../../hooks/activeIntentsSpec"
 
 type MutationClass = "AST_REFACTOR" | "INTENT_EVOLUTION"
 type CommandClass = "SAFE" | "DESTRUCTIVE"
-
-interface ActiveIntent {
-	id: string
-	name?: string
-	status?: string
-	owned_scope: string[]
-	constraints: string[]
-	acceptance_criteria: string[]
-}
-
-interface ActiveIntentsYaml {
-	active_intents?: ActiveIntent[]
-}
 
 interface RuntimeState {
 	turnStartedAtMs: number
@@ -74,7 +65,6 @@ interface OrchestrationPostHookInput {
 const runtimeStates = new WeakMap<Task, RuntimeState>()
 
 const ORCHESTRATION_DIR = ".orchestration"
-const ACTIVE_INTENTS_FILE = "active_intents.yaml"
 const TRACE_LEDGER_FILE = "agent_trace.jsonl"
 const INTENT_MAP_FILE = "intent_map.md"
 const DEFAULT_TRACE_REQUIREMENT_IDS = ["REQ-TRACE-001", "REQ-TRACE-002", "REQ-TRACE-003", "REQ-TRACE-004"]
@@ -371,44 +361,21 @@ async function ensureFile(filePath: string, defaultContent: string): Promise<voi
 }
 
 async function loadActiveIntents(cwd: string): Promise<{ ok: true; intents: ActiveIntent[] } | { ok: false; errorResult: string }> {
-	const intentsPath = path.join(cwd, ORCHESTRATION_DIR, ACTIVE_INTENTS_FILE)
-	try {
-		const raw = await fs.readFile(intentsPath, "utf-8")
-		const parsed = (yaml.parse(raw) as ActiveIntentsYaml | null) ?? {}
-		const intents = Array.isArray(parsed.active_intents) ? parsed.active_intents : []
+	const result = await loadActiveIntentsSpec(cwd)
+	if (result.ok) {
+		return { ok: true, intents: result.intents }
+	}
 
-		const normalized = intents
-			.filter((intent) => typeof intent?.id === "string" && intent.id.trim().length > 0)
-			.map((intent) => ({
-				id: intent.id,
-				name: intent.name,
-				status: intent.status,
-				owned_scope: Array.isArray(intent.owned_scope) ? intent.owned_scope.filter(Boolean) : [],
-				constraints: Array.isArray(intent.constraints) ? intent.constraints.filter(Boolean) : [],
-				acceptance_criteria: Array.isArray(intent.acceptance_criteria)
-					? intent.acceptance_criteria.filter(Boolean)
-					: [],
-			}))
-
-		return { ok: true, intents: normalized }
-	} catch (error: any) {
-		if (error?.code === "ENOENT") {
-			return {
-				ok: false,
-				errorResult: createStructuredError(
-					"missing_intents",
-					`Missing required .orchestration/${ACTIVE_INTENTS_FILE}. Define at least one intent before mutation.`,
-				),
-			}
-		}
-
+	if (result.kind === "missing") {
 		return {
 			ok: false,
-			errorResult: createStructuredError(
-				"intent_parse_failed",
-				`Failed to parse .orchestration/${ACTIVE_INTENTS_FILE}: ${error instanceof Error ? error.message : String(error)}`,
-			),
+			errorResult: createStructuredError("missing_intents", result.message),
 		}
+	}
+
+	return {
+		ok: false,
+		errorResult: createStructuredError("intent_parse_failed", result.message),
 	}
 }
 

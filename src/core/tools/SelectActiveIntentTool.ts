@@ -1,7 +1,7 @@
 import { Task } from "../task/Task"
 import { BaseTool, ToolCallbacks } from "./BaseTool"
 import type { ToolUse } from "../../shared/tools"
-import { selectActiveIntentForTask } from "../orchestration/ToolHookEngine"
+import { runIntentSelectionHook } from "../../hooks/intentSelectionHook"
 
 interface SelectActiveIntentParams {
 	intent_id: string
@@ -21,7 +21,7 @@ export class SelectActiveIntentTool extends BaseTool<"select_active_intent"> {
 			return
 		}
 
-		const result = await selectActiveIntentForTask(task, intent_id)
+		const result = await runIntentSelectionHook(task, intent_id)
 		if (!result.ok) {
 			task.consecutiveMistakeCount++
 			task.recordToolError("select_active_intent")
@@ -45,4 +45,3 @@ export class SelectActiveIntentTool extends BaseTool<"select_active_intent"> {
 }
 
 export const selectActiveIntentTool = new SelectActiveIntentTool()
-

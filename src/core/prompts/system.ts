@@ -10,6 +10,7 @@ import { isEmpty } from "../../utils/object"
 import { McpHub } from "../../services/mcp/McpHub"
 import { CodeIndexManager } from "../../services/code-index/manager"
 import { SkillsManager } from "../../services/skills/SkillsManager"
+import { enforceSystemPromptIntentHooks } from "../../hooks/systemPromptEnforcementHook"
 
 import type { SystemPromptSettings } from "./types"
 import {
@@ -106,7 +107,7 @@ ${await addCustomInstructions(baseInstructions, globalCustomInstructions || "", 
 	settings,
 })}`
 
-	return basePrompt
+	return enforceSystemPromptIntentHooks(basePrompt, cwd)
 }
 
 export const SYSTEM_PROMPT = async (

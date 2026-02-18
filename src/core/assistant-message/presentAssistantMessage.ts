@@ -38,7 +38,7 @@ import { selectActiveIntentTool } from "../tools/SelectActiveIntentTool"
 import { applyDiffTool as applyDiffToolClass } from "../tools/ApplyDiffTool"
 import { isValidToolName, validateToolUse } from "../tools/validateToolUse"
 import { codebaseSearchTool } from "../tools/CodebaseSearchTool"
-import { runOrchestrationPostToolHook, runOrchestrationPreToolHook } from "../orchestration/ToolHookEngine"
+import { runToolMiddlewarePostHook, runToolMiddlewarePreHook } from "../../hooks/toolMiddlewareHooks"
 
 import { formatResponse } from "../prompts/responses"
 import { sanitizeToolUseId } from "../../utils/tool-id"
@@ -128,9 +128,10 @@ export async function presentAssistantMessage(cline: Task) {
 				break
 			}
 
-			// Track if we've already pushed a tool result
-			let hasToolResult = false
-			const toolCallId = mcpBlock.id
+				// Track if we've already pushed a tool result
+				let hasToolResult = false
+				const toolCallId = mcpBlock.id
+				let consumePreHookApproval = false
 
 			// Store approval feedback to merge into tool result (GitHub #10465)
 			let approvalFeedback: { text: string; images?: string[] } | undefined
@@ -698,7 +699,7 @@ export async function presentAssistantMessage(cline: Task) {
 				| undefined
 
 			if (!block.partial) {
-				const preHookResult = await runOrchestrationPreToolHook({
+				const preHookResult = await runToolMiddlewarePreHook({
 					task: cline,
 					toolName: block.name,
 					toolArgs: (block.nativeArgs ?? block.params) as Record<string, unknown> | undefined,
@@ -966,7 +967,7 @@ export async function presentAssistantMessage(cline: Task) {
 			}
 
 			if (!block.partial && orchestrationPreHookContext) {
-				await runOrchestrationPostToolHook({
+				await runToolMiddlewarePostHook({
 					task: cline,
 					context: orchestrationPreHookContext,
 					toolResult: lastToolResult,

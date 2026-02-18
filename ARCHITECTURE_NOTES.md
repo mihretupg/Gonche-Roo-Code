@@ -19,9 +19,9 @@ It provides the implementation map and governance evidence for `specs/000-system
 ### Tool loop entrypoint (host extension)
 
 - Primary dispatcher function: `presentAssistantMessage(cline: Task)` in `src/core/assistant-message/presentAssistantMessage.ts:63`.
-- Mutation guard wrapper:
-    - pre-hook: `runOrchestrationPreToolHook(...)` at `src/core/assistant-message/presentAssistantMessage.ts:744`
-    - post-hook: `runOrchestrationPostToolHook(...)` at `src/core/assistant-message/presentAssistantMessage.ts:1014`
+- Hook middleware wiring now goes through `src/hooks/toolMiddlewareHooks.ts`:
+    - pre-hook entry: `runToolMiddlewarePreHook(...)`
+    - post-hook entry: `runToolMiddlewarePostHook(...)`
 - Exact tool routing in the dispatcher switch:
     - `case "write_to_file"` -> `writeToFileTool.handle(...)` at `src/core/assistant-message/presentAssistantMessage.ts:767`
     - `case "execute_command"` -> `executeCommandTool.handle(...)` at `src/core/assistant-message/presentAssistantMessage.ts:851`
@@ -42,6 +42,10 @@ It provides the implementation map and governance evidence for `specs/000-system
     - invokes `SYSTEM_PROMPT(...)` at `src/core/task/Task.ts:3793`
     - implemented in `src/core/prompts/system.ts:112`
     - built by `generatePrompt(...)` in `src/core/prompts/system.ts:41`
+- System prompt enforcement hook:
+    - `src/hooks/systemPromptEnforcementHook.ts`
+    - injects `select_active_intent` reasoning-loop requirement when missing
+    - appends parsed active-intent catalog from `.orchestration/active_intents.yaml` when available
 - Prompt preview path (webview "getSystemPrompt"):
     - `generateSystemPrompt(...)` in `src/core/webview/generateSystemPrompt.ts:12`
     - invokes the same `SYSTEM_PROMPT(...)` at `src/core/webview/generateSystemPrompt.ts:42`
@@ -57,10 +61,12 @@ It provides the implementation map and governance evidence for `specs/000-system
 
 - Tool definition: `src/core/prompts/tools/native-tools/select_active_intent.ts`
 - Tool executor: `src/core/tools/SelectActiveIntentTool.ts`
+- Intent-selection hook entry: `src/hooks/intentSelectionHook.ts`
 
 ### Context loader and injection
 
 - Intent load, validation, and context assembly: `selectActiveIntentForTask(...)` in `src/core/orchestration/ToolHookEngine.ts`
+- Active intent spec parsing: `src/hooks/activeIntentsSpec.ts`
 - Reads `.orchestration/active_intents.yaml`
 - Reads recent matching entries from `.orchestration/agent_trace.jsonl`
 - Returns `<intent_context>...</intent_context>` tool result
