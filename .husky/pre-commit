@@ -1,7 +1,8 @@
 branch="$(git rev-parse --abbrev-ref HEAD)"
 
-if [ "$branch" = "main" ]; then
+if [ "$branch" = "main" ] && [ "$ALLOW_MAIN_GIT" != "true" ]; then
   echo "You can't commit directly to main - please check out a branch."
+  echo "Set ALLOW_MAIN_GIT=true to override intentionally."
   exit 1
 fi
 

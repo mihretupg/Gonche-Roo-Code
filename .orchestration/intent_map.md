@@ -11,3 +11,10 @@
 - src/core/assistant-message/presentAssistantMessage.ts
 - src/core/task/Task.ts
 - src/core/prompts/system.ts
+
+## 2026-02-18T21:40:00.000Z - INT-001
+
+- .orchestration/active_intents.yaml
+- .orchestration/intent_map.md
+- .husky/pre-commit
+- .husky/pre-push

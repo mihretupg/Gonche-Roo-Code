@@ -10,6 +10,8 @@ active_intents:
       - src/core/prompts/**
       - src/hooks/**
       - src/shared/**
+      - .orchestration/**
+      - .husky/**
     constraints:
       - Mutations MUST preserve deterministic pre/post hook behavior.
       - Mutations MUST keep intent-required checks and scope-validation checks.
