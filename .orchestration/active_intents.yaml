@@ -23,6 +23,7 @@ active_intents:
     status: active
     owned_scope:
       - webview-ui/**
+      - src/hooks/**
     constraints:
       - SettingsView input controls MUST bind to cachedState, not live extension state.
       - UI changes MUST not bypass extension-host governance boundaries.

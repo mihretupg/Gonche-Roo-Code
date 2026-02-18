@@ -54,3 +54,19 @@
 - specs/008-definition-of-done.md
 - ARCHITECTURE_NOTES.md
 - .orchestration/intent_map.md
+
+## 2026-02-18T00:00:00.000Z - INT-002
+
+- .orchestration/active_intents.yaml
+- src/hooks/useAutoApprovalState.ts
+- src/hooks/useAutoApprovalToggles.ts
+- src/hooks/useCloudUpsell.ts
+- src/hooks/useEscapeKey.ts
+- src/hooks/useTooManyTools.ts
+- src/hooks/**tests**/useAutoApprovalState.spec.ts
+- src/hooks/**tests**/useEscapeKey.spec.ts
+
+## 2026-02-18T00:00:00.000Z - INT-003
+
+- ARCHITECTURE_NOTES.md
+- .orchestration/intent_map.md

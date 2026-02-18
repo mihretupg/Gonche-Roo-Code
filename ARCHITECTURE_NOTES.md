@@ -18,14 +18,18 @@ It provides the implementation map and governance evidence for `specs/000-system
 
 ### Tool loop entrypoint (host extension)
 
-- Dispatcher: `src/core/assistant-message/presentAssistantMessage.ts`
-- `write_to_file` and other write/destructive tools are routed from this switch.
-- `execute_command` is routed from this same switch.
+- Primary dispatcher function: `presentAssistantMessage(cline: Task)` in `src/core/assistant-message/presentAssistantMessage.ts:63`.
+- Mutation guard wrapper:
+    - pre-hook: `runOrchestrationPreToolHook(...)` at `src/core/assistant-message/presentAssistantMessage.ts:744`
+    - post-hook: `runOrchestrationPostToolHook(...)` at `src/core/assistant-message/presentAssistantMessage.ts:1014`
+- Exact tool routing in the dispatcher switch:
+    - `case "write_to_file"` -> `writeToFileTool.handle(...)` at `src/core/assistant-message/presentAssistantMessage.ts:767`
+    - `case "execute_command"` -> `executeCommandTool.handle(...)` at `src/core/assistant-message/presentAssistantMessage.ts:851`
 
 ### Concrete tool executors
 
-- `src/core/tools/WriteToFileTool.ts`
-- `src/core/tools/ExecuteCommandTool.ts`
+- `WriteToFileTool.execute(...)` in `src/core/tools/WriteToFileTool.ts:29`
+- `ExecuteCommandTool.execute(...)` in `src/core/tools/ExecuteCommandTool.ts:34`
 - `src/core/tools/ApplyDiffTool.ts`
 - `src/core/tools/ApplyPatchTool.ts`
 - `src/core/tools/EditFileTool.ts`
@@ -33,12 +37,19 @@ It provides the implementation map and governance evidence for `specs/000-system
 
 ### Prompt builder path
 
-- Runtime assembly starts in `Task.getSystemPrompt()` at `src/core/task/Task.ts`.
-- Prompt sections are composed through `src/core/prompts/system.ts`.
-- Intent-first protocol instructions are in:
+- Runtime path (task execution):
+    - `Task.getSystemPrompt()` in `src/core/task/Task.ts:3746`
+    - invokes `SYSTEM_PROMPT(...)` at `src/core/task/Task.ts:3793`
+    - implemented in `src/core/prompts/system.ts:112`
+    - built by `generatePrompt(...)` in `src/core/prompts/system.ts:41`
+- Prompt preview path (webview "getSystemPrompt"):
+    - `generateSystemPrompt(...)` in `src/core/webview/generateSystemPrompt.ts:12`
+    - invokes the same `SYSTEM_PROMPT(...)` at `src/core/webview/generateSystemPrompt.ts:42`
+- Prompt sections where "Reasoning Loop" policy can be enforced:
     - `src/core/prompts/sections/objective.ts`
-    - `src/core/prompts/sections/rules.ts`
     - `src/core/prompts/sections/tool-use-guidelines.ts`
+    - `src/core/prompts/sections/rules.ts`
+    - optional mode-specific overlays via custom instructions in `addCustomInstructions(...)` inside `src/core/prompts/system.ts:103`
 
 ## Phase 1: Handshake
 
