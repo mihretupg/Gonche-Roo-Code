@@ -1,0 +1,23 @@
+safe_read_commands:
+  - cat
+  - type
+  - ls
+  - dir
+  - pwd
+  - cd
+  - echo
+  - git status
+  - git diff
+  - git log
+  - git show
+  - rg
+  - find
+  - which
+  - where
+
+destructive_command_patterns:
+  - "[>|]{1,2}"
+  - "\\b(rm|del|remove-item|mv|move-item|cp|copy-item|mkdir|rmdir|touch|chmod|chown)\\b"
+  - "\\b(git\\s+(commit|push|reset|checkout|clean))\\b"
+  - "\\b(npm|pnpm|yarn)\\s+(install|add|remove|uninstall|update|upgrade)\\b"
+  - "\\bsed\\s+-i\\b"

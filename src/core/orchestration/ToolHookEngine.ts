@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import crypto from "crypto"
 import { execSync } from "child_process"
+import * as yaml from "yaml"
 
 import type { AskApproval, ToolResponse } from "../../shared/tools"
 import type { Task } from "../task/Task"
@@ -67,7 +68,38 @@ const runtimeStates = new WeakMap<Task, RuntimeState>()
 const ORCHESTRATION_DIR = ".orchestration"
 const TRACE_LEDGER_FILE = "agent_trace.jsonl"
 const INTENT_MAP_FILE = "intent_map.md"
+const HOOK_POLICY_FILE = "hook_policy.yaml"
+const INTENT_IGNORE_FILE = ".intentignore"
 const DEFAULT_TRACE_REQUIREMENT_IDS = ["REQ-TRACE-001", "REQ-TRACE-002", "REQ-TRACE-003", "REQ-TRACE-004"]
+const DEFAULT_SAFE_READ_COMMANDS = [
+	"cat",
+	"type",
+	"ls",
+	"dir",
+	"pwd",
+	"cd",
+	"echo",
+	"git status",
+	"git diff",
+	"git log",
+	"git show",
+	"rg",
+	"find",
+	"which",
+	"where",
+]
+const DEFAULT_DESTRUCTIVE_COMMAND_PATTERNS = [
+	"[>|]{1,2}",
+	"\\b(rm|del|remove-item|mv|move-item|cp|copy-item|mkdir|rmdir|touch|chmod|chown)\\b",
+	"\\b(git\\s+(commit|push|reset|checkout|clean))\\b",
+	"\\b(npm|pnpm|yarn)\\s+(install|add|remove|uninstall|update|upgrade)\\b",
+	"\\bsed\\s+-i\\b",
+]
+
+interface HookPolicyDocument {
+	safe_read_commands?: string[]
+	destructive_command_patterns?: string[]
+}
 
 const WRITE_TOOLS = new Set<string>([
 	"write_to_file",
@@ -170,7 +202,9 @@ export async function runOrchestrationPreToolHook(
 	}
 
 	const commandClass =
-		toolName === "execute_command" ? classifyCommand((toolArgs?.command as string | undefined) ?? "") : "SAFE"
+		toolName === "execute_command"
+			? await classifyCommand(task.cwd, (toolArgs?.command as string | undefined) ?? "")
+			: "SAFE"
 	const isCommandMutation = toolName === "execute_command" && commandClass === "DESTRUCTIVE"
 	const isWriteMutation = WRITE_TOOLS.has(toolName)
 	const isMutation = isWriteMutation || isCommandMutation
@@ -178,10 +212,9 @@ export async function runOrchestrationPreToolHook(
 	if (isMutation && (!state.activeIntent || !state.turnIntentSelected)) {
 		return {
 			blocked: true,
-			errorResult: createStructuredError(
-				"intent_required",
-				"Valid intent_id required. Call select_active_intent(intent_id) as the first tool action before mutation.",
-			),
+			errorResult: createStructuredError("intent_required", "You must cite a valid active Intent ID.", {
+				hint: "Call select_active_intent(intent_id) as the first tool action before mutation.",
+			}),
 		}
 	}
 
@@ -194,7 +227,48 @@ export async function runOrchestrationPreToolHook(
 		return { blocked: false, preApproved: false, context }
 	}
 
+	if (state.activeIntent?.id && (await isIntentIgnored(task.cwd, state.activeIntent.id))) {
+		return {
+			blocked: true,
+			errorResult: createStructuredError(
+				"intent_blocked",
+				`Intent Blocked: ${state.activeIntent.id} is excluded by .orchestration/${INTENT_IGNORE_FILE}. Select another intent or update ignore policy.`,
+			),
+		}
+	}
+
 	if (isWriteMutation) {
+		const metadata = extractIntentMetadata(toolName, toolArgs)
+		if (toolName === "write_to_file") {
+			if (!metadata.intentId || !metadata.intentId.trim()) {
+				return {
+					blocked: true,
+					errorResult: createStructuredError(
+						"missing_intent_metadata",
+						"write_to_file requires intent_id and mutation_class metadata.",
+					),
+				}
+			}
+			if (!metadata.mutationClass) {
+				return {
+					blocked: true,
+					errorResult: createStructuredError(
+						"missing_mutation_class",
+						"write_to_file requires mutation_class in {AST_REFACTOR, INTENT_EVOLUTION}.",
+					),
+				}
+			}
+			if (metadata.intentId !== state.activeIntent?.id) {
+				return {
+					blocked: true,
+					errorResult: createStructuredError(
+						"intent_mismatch",
+						`Intent mismatch: active intent is ${state.activeIntent?.id}, but write_to_file specified ${metadata.intentId}.`,
+					),
+				}
+			}
+		}
+
 		const rawTargets = extractWriteTargets(toolName, toolArgs)
 		if (rawTargets.length === 0) {
 			return {
@@ -234,7 +308,9 @@ export async function runOrchestrationPreToolHook(
 			context.targets.push(snapshot)
 		}
 
-		context.mutationClass = context.targets.every((target) => target.existed) ? "AST_REFACTOR" : "INTENT_EVOLUTION"
+		context.mutationClass =
+			metadata.mutationClass ??
+			(context.targets.every((target) => target.existed) ? "AST_REFACTOR" : "INTENT_EVOLUTION")
 		context.intentId = state.activeIntent?.id
 	}
 
@@ -321,7 +397,11 @@ export async function runOrchestrationPostToolHook(input: OrchestrationPostHookI
 			await appendJsonLine(path.join(task.cwd, ORCHESTRATION_DIR, TRACE_LEDGER_FILE), traceEntry)
 
 			if (traceEntry.mutation_class === "INTENT_EVOLUTION") {
-				await appendIntentMapUpdate(task.cwd, context.intentId, modifiedRanges.map((entry) => entry.file))
+				await appendIntentMapUpdate(
+					task.cwd,
+					context.intentId,
+					modifiedRanges.map((entry) => entry.file),
+				)
 			}
 		}
 	}
@@ -350,6 +430,20 @@ async function ensureOrchestrationScaffold(cwd: string): Promise<void> {
 
 	await ensureFile(path.join(orchestrationDir, TRACE_LEDGER_FILE), "")
 	await ensureFile(path.join(orchestrationDir, INTENT_MAP_FILE), "# Intent Map\n\n")
+	await ensureFile(
+		path.join(orchestrationDir, HOOK_POLICY_FILE),
+		[
+			"safe_read_commands:",
+			...DEFAULT_SAFE_READ_COMMANDS.map((command) => `  - ${command}`),
+			"destructive_command_patterns:",
+			...DEFAULT_DESTRUCTIVE_COMMAND_PATTERNS.map((pattern) => `  - '${pattern}'`),
+			"",
+		].join("\n"),
+	)
+	await ensureFile(
+		path.join(orchestrationDir, INTENT_IGNORE_FILE),
+		"# One intent ID per line to block for mutation.\n",
+	)
 }
 
 async function ensureFile(filePath: string, defaultContent: string): Promise<void> {
@@ -360,7 +454,9 @@ async function ensureFile(filePath: string, defaultContent: string): Promise<voi
 	}
 }
 
-async function loadActiveIntents(cwd: string): Promise<{ ok: true; intents: ActiveIntent[] } | { ok: false; errorResult: string }> {
+async function loadActiveIntents(
+	cwd: string,
+): Promise<{ ok: true; intents: ActiveIntent[] } | { ok: false; errorResult: string }> {
 	const result = await loadActiveIntentsSpec(cwd)
 	if (result.ok) {
 		return { ok: true, intents: result.intents }
@@ -381,7 +477,9 @@ async function loadActiveIntents(cwd: string): Promise<{ ok: true; intents: Acti
 
 function buildIntentContext(intent: ActiveIntent, recentTrace: Array<Record<string, unknown>>): string {
 	const ownedScopeXml = intent.owned_scope.map((scope) => `    <path>${escapeXml(scope)}</path>`).join("\n")
-	const constraintsXml = intent.constraints.map((constraint) => `    <rule>${escapeXml(constraint)}</rule>`).join("\n")
+	const constraintsXml = intent.constraints
+		.map((constraint) => `    <rule>${escapeXml(constraint)}</rule>`)
+		.join("\n")
 	const recentTraceXml = recentTrace
 		.map((entry) => {
 			const timestamp = escapeXml(String(entry.timestamp ?? ""))
@@ -411,7 +509,11 @@ ${recentTraceXml || "    <entry />"}
 </intent_context>`
 }
 
-async function loadRecentTraceForIntent(cwd: string, intentId: string, limit: number): Promise<Array<Record<string, unknown>>> {
+async function loadRecentTraceForIntent(
+	cwd: string,
+	intentId: string,
+	limit: number,
+): Promise<Array<Record<string, unknown>>> {
 	const tracePath = path.join(cwd, ORCHESTRATION_DIR, TRACE_LEDGER_FILE)
 	try {
 		const raw = await fs.readFile(tracePath, "utf-8")
@@ -549,23 +651,97 @@ function asString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined
 }
 
-function classifyCommand(command: string): CommandClass {
+function extractIntentMetadata(
+	toolName: string,
+	toolArgs?: Record<string, unknown>,
+): { intentId?: string; mutationClass?: MutationClass } {
+	if (!WRITE_TOOLS.has(toolName)) {
+		return {}
+	}
+
+	const intentIdRaw = toolArgs?.intent_id
+	const mutationClassRaw = toolArgs?.mutation_class
+	const intentId = typeof intentIdRaw === "string" && intentIdRaw.trim().length > 0 ? intentIdRaw.trim() : undefined
+	const mutationClass =
+		mutationClassRaw === "AST_REFACTOR" || mutationClassRaw === "INTENT_EVOLUTION" ? mutationClassRaw : undefined
+
+	return { intentId, mutationClass }
+}
+
+async function classifyCommand(cwd: string, command: string): Promise<CommandClass> {
 	const normalized = command.toLowerCase()
-	const destructivePatterns = [
-		/[>|]{1,2}/,
-		/\b(rm|del|remove-item|mv|move-item|cp|copy-item|mkdir|rmdir|touch|chmod|chown)\b/,
-		/\b(git\s+(commit|push|reset|checkout|clean))\b/,
-		/\b(npm|pnpm|yarn)\s+(install|add|remove|uninstall|update|upgrade)\b/,
-		/\bsed\s+-i\b/,
-	]
-	return destructivePatterns.some((pattern) => pattern.test(normalized)) ? "DESTRUCTIVE" : "SAFE"
+	const policy = await loadHookPolicy(cwd)
+	const destructivePatterns = policy.destructiveCommandPatterns.map((pattern) => new RegExp(pattern, "i"))
+	if (destructivePatterns.some((pattern) => pattern.test(normalized))) {
+		return "DESTRUCTIVE"
+	}
+
+	const segments = normalized
+		.split(/&&|\|\||;/g)
+		.map((segment) => segment.trim())
+		.filter(Boolean)
+
+	if (segments.length === 0) {
+		return "SAFE"
+	}
+
+	const safe = segments.every((segment) => policy.safeReadCommands.some((allow) => segment.startsWith(allow)))
+	return safe ? "SAFE" : "DESTRUCTIVE"
+}
+
+async function loadHookPolicy(cwd: string): Promise<{
+	safeReadCommands: string[]
+	destructiveCommandPatterns: string[]
+}> {
+	const hookPolicyPath = path.join(cwd, ORCHESTRATION_DIR, HOOK_POLICY_FILE)
+	try {
+		const raw = await fs.readFile(hookPolicyPath, "utf-8")
+		const parsed = (yaml.parse(raw) as HookPolicyDocument | null) ?? {}
+		const safeReadCommands = Array.isArray(parsed.safe_read_commands)
+			? parsed.safe_read_commands
+					.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+					.map((entry) => entry.trim().toLowerCase())
+			: DEFAULT_SAFE_READ_COMMANDS
+		const destructiveCommandPatterns = Array.isArray(parsed.destructive_command_patterns)
+			? parsed.destructive_command_patterns.filter(
+					(entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+				)
+			: DEFAULT_DESTRUCTIVE_COMMAND_PATTERNS
+
+		return {
+			safeReadCommands,
+			destructiveCommandPatterns,
+		}
+	} catch {
+		return {
+			safeReadCommands: DEFAULT_SAFE_READ_COMMANDS,
+			destructiveCommandPatterns: DEFAULT_DESTRUCTIVE_COMMAND_PATTERNS,
+		}
+	}
+}
+
+async function isIntentIgnored(cwd: string, intentId: string): Promise<boolean> {
+	const intentIgnorePath = path.join(cwd, ORCHESTRATION_DIR, INTENT_IGNORE_FILE)
+	try {
+		const raw = await fs.readFile(intentIgnorePath, "utf-8")
+		const blocked = raw
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0 && !line.startsWith("#"))
+		return blocked.includes(intentId)
+	} catch {
+		return false
+	}
 }
 
 function sha256(content: string): string {
 	return crypto.createHash("sha256").update(content).digest("hex")
 }
 
-function computeModifiedRange(beforeContent: string, afterContent: string): {
+function computeModifiedRange(
+	beforeContent: string,
+	afterContent: string,
+): {
 	oldRange: { start_line: number; end_line: number }
 	newRange: { start_line: number; end_line: number }
 	contentHash: string
@@ -621,11 +797,7 @@ async function appendIntentMapUpdate(cwd: string, intentId: string, files: strin
 	const filePath = path.join(cwd, ORCHESTRATION_DIR, INTENT_MAP_FILE)
 	const timestamp = new Date().toISOString()
 	const uniqueFiles = [...new Set(files)]
-	const lines = [
-		`## ${timestamp} - ${intentId}`,
-		...uniqueFiles.map((file) => `- ${file}`),
-		"",
-	]
+	const lines = [`## ${timestamp} - ${intentId}`, ...uniqueFiles.map((file) => `- ${file}`), ""]
 	await fs.appendFile(filePath, `${lines.join("\n")}\n`, "utf-8")
 }
 
@@ -653,7 +825,8 @@ async function appendLessonLearned(cwd: string, command: string): Promise<void> 
 	}
 
 	if (!existing.includes(heading)) {
-		const seed = existing.trim().length > 0 ? `${existing.trim()}\n\n${heading}\n${line}\n` : `${heading}\n${line}\n`
+		const seed =
+			existing.trim().length > 0 ? `${existing.trim()}\n\n${heading}\n${line}\n` : `${heading}\n${line}\n`
 		await fs.writeFile(target, seed, "utf-8")
 		return
 	}
