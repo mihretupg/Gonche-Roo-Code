@@ -18,3 +18,7 @@
 - .orchestration/intent_map.md
 - .husky/pre-commit
 - .husky/pre-push
+
+## 2026-02-21T09:47:57.976Z - INT-001
+
+- .orchestration/governed_write_demo.md
