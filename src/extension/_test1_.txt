@@ -1,0 +1,19 @@
+Error: Could not read .vscode-test configuration: node:internal/util:449
+  validateFunction(original, 'original');
+  ^
+
+TypeError [ERR_INVALID_ARG_TYPE]: The "original" argument must be of type function. Received an instance of Object
+    at promisify (node:internal/util:449:3)
+    at Object.<anonymous> (C:\Users\Mihretu Petros\Desktop\Projects\Tenx\week 1\Gonche-Roo-Code\node_modules\.pnpm\test-exclude@6.0.0\node_modules\test-exclude\index.js:5:14)
+    at Module._compile (node:internal/modules/cjs/loader:1714:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1848:10)
+    at Module.load (node:internal/modules/cjs/loader:1448:32)
+    at Module._load (node:internal/modules/cjs/loader:1270:12)
+    at c._load (node:electron/js2c/node_init:2:17993)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:244:24)
+    at Module.require (node:internal/modules/cjs/loader:1470:12) {
+  code: 'ERR_INVALID_ARG_TYPE'
+}
+
+Node.js v22.21.1

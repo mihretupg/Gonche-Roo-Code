@@ -3,6 +3,7 @@ import path from "path"
 import crypto from "crypto"
 import { execSync } from "child_process"
 import * as yaml from "yaml"
+import { parseSourceCodeDefinitionsForFile } from "../../services/tree-sitter"
 
 import type { AskApproval, ToolResponse } from "../../shared/tools"
 import type { Task } from "../task/Task"
@@ -30,6 +31,16 @@ interface FileSnapshot {
 	existed: boolean
 	beforeHash: string | null
 	beforeContent: string
+}
+
+type AstStatus = "ok" | "fallback"
+
+interface AstNodeAttribution {
+	symbol: string
+	type: string
+	start_line: number
+	end_line: number
+	node_hash: string
 }
 
 export interface OrchestrationPreHookContext {
@@ -359,6 +370,8 @@ export async function runOrchestrationPostToolHook(input: OrchestrationPostHookI
 			content_hash: string
 			before_hash: string | null
 			after_hash: string | null
+			ast_status: AstStatus
+			ast_nodes: AstNodeAttribution[]
 		}> = []
 
 		for (const target of context.targets) {
@@ -372,6 +385,7 @@ export async function runOrchestrationPostToolHook(input: OrchestrationPostHookI
 			}
 
 			const range = computeModifiedRange(target.beforeContent, afterSnapshot.beforeContent)
+			const astAttribution = await buildAstAttribution(target.absolutePath, range.newRange)
 			modifiedRanges.push({
 				file: target.relativePath,
 				old_range: range.oldRange,
@@ -379,6 +393,8 @@ export async function runOrchestrationPostToolHook(input: OrchestrationPostHookI
 				content_hash: range.contentHash,
 				before_hash: target.beforeHash,
 				after_hash: afterSnapshot.beforeHash,
+				ast_status: astAttribution.status,
+				ast_nodes: astAttribution.nodes,
 			})
 		}
 
@@ -391,6 +407,8 @@ export async function runOrchestrationPostToolHook(input: OrchestrationPostHookI
 				related_requirements: context.relatedRequirementIds,
 				mutation_class: context.mutationClass ?? "AST_REFACTOR",
 				tool_name: context.toolName,
+				tool_origin: getToolOrigin(context.toolName),
+				agent_action: getAgentAction(context.toolName),
 				modified_ranges: modifiedRanges,
 			}
 
@@ -774,6 +792,129 @@ function computeModifiedRange(
 		newRange: { start_line: newStart, end_line: newEnd },
 		contentHash: sha256(changedSegment),
 	}
+}
+
+async function buildAstAttribution(
+	absolutePath: string,
+	newRange: { start_line: number; end_line: number },
+): Promise<{ status: AstStatus; nodes: AstNodeAttribution[] }> {
+	const fallback = { status: "fallback" as const, nodes: [] as AstNodeAttribution[] }
+
+	try {
+		const definitions = await parseSourceCodeDefinitionsForFile(absolutePath)
+		if (!definitions || definitions.startsWith("This file does not exist")) {
+			return fallback
+		}
+
+		const nodes: AstNodeAttribution[] = []
+		const lines = definitions.split(/\r?\n/)
+
+		for (const line of lines) {
+			const match = line.match(/^(\d+)--(\d+)\s+\|\s+(.*)$/)
+			if (!match) {
+				continue
+			}
+
+			const start = Number.parseInt(match[1], 10)
+			const end = Number.parseInt(match[2], 10)
+			if (!Number.isFinite(start) || !Number.isFinite(end)) {
+				continue
+			}
+
+			const overlaps = start <= newRange.end_line && end >= newRange.start_line
+			if (!overlaps) {
+				continue
+			}
+
+			const signature = (match[3] ?? "").trim()
+			const symbol = extractAstSymbol(signature)
+			const type = inferAstNodeType(signature)
+			nodes.push({
+				symbol,
+				type,
+				start_line: start,
+				end_line: end,
+				node_hash: sha256(`${start}:${end}:${signature}`),
+			})
+		}
+
+		if (nodes.length === 0) {
+			return fallback
+		}
+
+		return { status: "ok", nodes: nodes.slice(0, 12) }
+	} catch {
+		return fallback
+	}
+}
+
+function extractAstSymbol(signature: string): string {
+	const trimmed = signature.trim()
+	if (!trimmed) {
+		return "anonymous"
+	}
+
+	const declarationMatch = trimmed.match(
+		/\b(function|class|interface|type|enum|namespace|module|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)/,
+	)
+	if (declarationMatch?.[2]) {
+		return declarationMatch[2]
+	}
+
+	const callableMatch = trimmed.match(/([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:\(|<)/)
+	if (callableMatch?.[1]) {
+		return callableMatch[1]
+	}
+
+	return trimmed.split(/\s+/)[0].slice(0, 120)
+}
+
+function inferAstNodeType(signature: string): string {
+	const normalized = signature.toLowerCase()
+	if (normalized.includes(" class ")) {
+		return "class"
+	}
+	if (normalized.includes(" interface ")) {
+		return "interface"
+	}
+	if (normalized.includes(" enum ")) {
+		return "enum"
+	}
+	if (normalized.includes(" type ")) {
+		return "type"
+	}
+	if (normalized.includes(" function ") || /\w+\s*\(/.test(signature)) {
+		return "function"
+	}
+	return "definition"
+}
+
+function getToolOrigin(toolName: string): "native" | "mcp" | "custom" {
+	if (toolName.startsWith("mcp_")) {
+		return "mcp"
+	}
+	return WRITE_TOOLS.has(toolName) || toolName === "execute_command" ? "native" : "custom"
+}
+
+function getAgentAction(toolName: string): "WRITE_FILE" | "PATCH_FILE" | "EDIT_FILE" | "GENERATE_ASSET" | "MUTATE" {
+	if (toolName === "write_to_file") {
+		return "WRITE_FILE"
+	}
+	if (toolName === "apply_patch" || toolName === "apply_diff") {
+		return "PATCH_FILE"
+	}
+	if (
+		toolName === "edit" ||
+		toolName === "edit_file" ||
+		toolName === "search_and_replace" ||
+		toolName === "search_replace"
+	) {
+		return "EDIT_FILE"
+	}
+	if (toolName === "generate_image") {
+		return "GENERATE_ASSET"
+	}
+	return "MUTATE"
 }
 
 async function appendJsonLine(filePath: string, value: Record<string, unknown>): Promise<void> {
