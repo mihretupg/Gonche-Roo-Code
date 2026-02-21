@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest"
 
 import type { Task } from "../../core/task/Task"
 
-const selectActiveIntentForTaskMock = vi.fn()
+const { selectActiveIntentForTaskMock } = vi.hoisted(() => ({
+	selectActiveIntentForTaskMock: vi.fn(),
+}))
 
 vi.mock("../../core/orchestration/ToolHookEngine", () => ({
 	selectActiveIntentForTask: selectActiveIntentForTaskMock,

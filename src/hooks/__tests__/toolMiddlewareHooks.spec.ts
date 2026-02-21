@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest"
 
 import type { Task } from "../../core/task/Task"
 
-const markOrchestrationTurnStartMock = vi.fn()
-const runOrchestrationPreToolHookMock = vi.fn()
-const runOrchestrationPostToolHookMock = vi.fn()
+const { markOrchestrationTurnStartMock, runOrchestrationPreToolHookMock, runOrchestrationPostToolHookMock } =
+	vi.hoisted(() => ({
+		markOrchestrationTurnStartMock: vi.fn(),
+		runOrchestrationPreToolHookMock: vi.fn(),
+		runOrchestrationPostToolHookMock: vi.fn(),
+	}))
 
 vi.mock("../../core/orchestration/ToolHookEngine", () => ({
 	markOrchestrationTurnStart: markOrchestrationTurnStartMock,
